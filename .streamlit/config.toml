@@ -1,0 +1,18 @@
+# Tema dasar Streamlit. Sebagian besar tampilan diatur lewat CSS di
+# components.py, tapi nilai di sini yang dipakai untuk hal-hal yang tidak
+# bisa disentuh CSS: warna spinner, latar sebelum CSS termuat, dan chrome
+# widget bawaan. Nilainya harus sama dengan theme.py.
+[theme]
+base = "dark"
+primaryColor = "#CCFF00"
+backgroundColor = "#121214"
+secondaryBackgroundColor = "#0C0C0E"
+textColor = "#FFFFFF"
+font = "monospace"
+
+[server]
+headless = true
+runOnSave = true
+
+[browser]
+gatherUsageStats = false

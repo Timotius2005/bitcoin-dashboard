@@ -1,0 +1,6 @@
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+# Histori lokal - data mesin ini, bukan untuk di-commit
+data/
