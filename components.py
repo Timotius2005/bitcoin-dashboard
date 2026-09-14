@@ -23,6 +23,8 @@ BULAN = ["Jan", "Feb", "Mar", "Apr", "Mei", "Jun",
          "Jul", "Agu", "Sep", "Okt", "Nov", "Des"]
 BULAN_PANJANG = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli",
                  "Agustus", "September", "Oktober", "November", "Desember"]
+NAMA_KATEGORI = {"trend": "Tren", "momentum": "Momentum", "sentiment": "Sentimen",
+                 "volatility": "Volatilitas & volume"}
 
 
 def rb(nilai: float | None, kosong: str = "—") -> str:
@@ -491,18 +493,36 @@ def price_header(baris) -> str:
 """
 
 
+def _catatan_penyesuaian(adj: dict | None) -> str:
+    """Catatan di bawah bar kalau skor kategorinya diubah aturan antar-indikator.
+
+    Tanpa ini, bar tren yang diredam ADX terlihat seperti skor tren yang
+    memang lemah - padahal sinyal trennya kuat dan cuma dianggap kurang andal.
+    """
+    if not adj:
+        return ""
+    return (f'<div class="num" style="font-size:10px;color:{T.INK_3};margin-top:7px">'
+            f'diredam ×{des(adj.get("factor"), 1)} dari {skor(adj.get("before"))} · '
+            f'{_e(adj.get("reason", ""))}</div>')
+
+
 def category_bars(baris) -> str:
     definisi = [
-        ("Tren", baris["cat_trend"], 0.35),
-        ("Momentum", baris["cat_momentum"], 0.25),
-        ("Sentimen", baris["cat_sentiment"], 0.25),
-        ("Volatilitas", baris["cat_volatility"], 0.15),
+        ("trend", "Tren", baris["cat_trend"], 0.35),
+        ("momentum", "Momentum", baris["cat_momentum"], 0.25),
+        ("sentiment", "Sentimen", baris["cat_sentiment"], 0.25),
+        ("volatility", "Volatilitas &amp; volume", baris["cat_volatility"], 0.15),
     ]
+    try:
+        penyesuaian = {a["category"]: a
+                       for a in json.loads(baris.get("adjustments_json") or "[]")}
+    except (json.JSONDecodeError, TypeError, KeyError):
+        penyesuaian = {}
     potong_kanan = "polygon(0 0,100% 0,calc(100% - 6px) 100%,0 100%)"
     potong_kiri = "polygon(6px 0,100% 0,100% 100%,0 100%)"
 
     blok = []
-    for i, (nama, nilai, bobot) in enumerate(definisi):
+    for i, (kunci, nama, nilai, bobot) in enumerate(definisi):
         if nilai is None:
             blok.append(f"""
             <div style="opacity:0.45">
@@ -541,6 +561,7 @@ def category_bars(baris) -> str:
             <div style="position:absolute;left:50%;top:0;bottom:0;width:1px;background:{T.AXIS}"></div>
             {isi}
           </div>
+          {_catatan_penyesuaian(penyesuaian.get(kunci))}
         </div>""")
 
     return f"""
@@ -565,27 +586,29 @@ def signals_list(baris) -> str:
         baris_html = []
         for i, s in enumerate(sinyal):
             nilai = s.get("score", 0)
-            warna = T.score_color(nilai)
+            info = s.get("kind") == "info"
+            warna = T.INK_3 if info else T.score_color(nilai)
+            nilai_teks = "INFO" if info else skor(nilai)
             terakhir = i == len(sinyal) - 1
             garis = "" if terakhir else f"border-bottom:1px solid {T.GRID};"
             baris_html.append(f"""
             <div class="sig-row rise" style="display:flex;gap:20px;padding:14px 16px 14px 14px;
                  margin-left:-14px;{garis}align-items:baseline;animation-delay:{0.5 + i * 0.07:.2f}s">
               <div class="num" style="width:48px;flex-shrink:0;font-size:15px;font-weight:500;
-                   color:{warna};text-align:right">{skor(nilai)}</div>
+                   color:{warna};text-align:right">{nilai_teks}</div>
               <div>
                 <div style="font-size:14.5px;font-weight:500">{_e(s.get("label", ""))}</div>
                 <div class="num sig-detail" style="font-size:11px;color:{T.INK_3};
                      margin-top:6px">{_e(s.get("detail", ""))}</div>
               </div>
               <div class="kicker" style="margin-left:auto;font-size:9.5px;flex-shrink:0">
-                {_e(s.get("category", ""))}</div>
+                {_e(NAMA_KATEGORI.get(s.get("category", ""), s.get("category", "")))}</div>
             </div>""")
         isi = "".join(baris_html)
 
     return f"""
 <div style="border-left:1px solid {T.HAIRLINE};padding-left:32px;padding-top:32px;padding-bottom:8px">
-  <div class="kicker">Sinyal terdeteksi · {len(sinyal)} aktif</div>
+  <div class="kicker">Sinyal terdeteksi · {sum(1 for x in sinyal if x.get('kind') != 'info')} aktif</div>
   <div class="sect">Aturan yang menyala hari ini</div>
   <div style="display:flex;flex-direction:column;margin-top:22px">{isi}</div>
 </div>
@@ -651,8 +674,8 @@ def indicator_strip(baris) -> str:
       <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:24px">
         {sel("Volume", des(baris["volume_ratio"], 2) + "×")}
         {sel("Dominansi BTC", des(baris["btc_dominance_pct"], 2) + "%" if baris["btc_dominance_pct"] is not None else "—")}
-        {sel("Pita atas", rb(baris["bb_upper"]))}
-        {sel("Pita bawah", rb(baris["bb_lower"]))}
+        {sel("ADX (14)", des(baris.get("adx14"), 1))}
+        {sel("ATR harian", des(baris.get("atr_pct"), 2) + "%" if baris.get("atr_pct") is not None else "—")}
       </div>
     </div>
   </div>
@@ -705,12 +728,12 @@ def history_table(baris_list, jumlah: int = 7) -> str:
 """
 
 
-def footer(jumlah_baris: int) -> str:
+def footer(jumlah_baris: int, versi: int | None = None) -> str:
     return f"""
 <div class="wrap" style="display:flex;justify-content:space-between;align-items:center;
      padding-top:26px;padding-bottom:36px">
   <div class="num" style="font-size:10.5px;color:{T.INK_3}">
-    BINANCE · COINGECKO · ALTERNATIVE.ME · SCORING v1 · {jumlah_baris} HARI TERSIMPAN</div>
+    BINANCE · COINGECKO · ALTERNATIVE.ME · SCORING v{versi or 1} · {jumlah_baris} HARI TERSIMPAN</div>
   <div class="num" style="font-size:10.5px;color:{T.INK_3}">BUKAN SARAN KEUANGAN</div>
 </div>
 """

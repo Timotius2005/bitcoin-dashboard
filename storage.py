@@ -7,6 +7,10 @@ datanya, baris yang sama diperbarui, bukan digandakan.
 Kolom-kolom penting dipipihkan jadi kolom SQL supaya bisa di-query dan
 di-plot langsung; JSON aslinya tetap disimpan utuh di `raw_json` agar tidak
 ada informasi yang hilang kalau nanti butuh field yang belum dipetakan.
+
+Skema didefinisikan sekali di COLUMN_DEFS. Database yang dibuat versi lama
+otomatis mendapat kolom yang belum ada saat dibuka, jadi tidak perlu
+menghapus histori lokal setiap kali pipeline menambah field.
 """
 
 from __future__ import annotations
@@ -19,76 +23,94 @@ from typing import Any, Iterable
 
 DEFAULT_DB = os.path.join("data", "history.db")
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS snapshots (
-    date                TEXT PRIMARY KEY,
-    generated_at        TEXT,
-    fetched_at          TEXT,
-    ingested_at         TEXT NOT NULL,
+COLUMN_DEFS: list[tuple[str, str]] = [
+    ("date", "TEXT PRIMARY KEY"),
+    ("generated_at", "TEXT"),
+    ("fetched_at", "TEXT"),
+    ("ingested_at", "TEXT NOT NULL"),
 
-    close               REAL,
-    open                REAL,
-    high                REAL,
-    low                 REAL,
-    change_1d_pct       REAL,
-    change_7d_pct       REAL,
-    change_30d_pct      REAL,
+    ("close", "REAL"),
+    ("open", "REAL"),
+    ("high", "REAL"),
+    ("low", "REAL"),
+    ("change_1d_pct", "REAL"),
+    ("change_7d_pct", "REAL"),
+    ("change_30d_pct", "REAL"),
 
-    rsi14               REAL,
-    ma20                REAL,
-    ma50                REAL,
-    macd_line           REAL,
-    macd_signal         REAL,
-    macd_hist           REAL,
-    bb_upper            REAL,
-    bb_middle           REAL,
-    bb_lower            REAL,
-    bb_percent_b        REAL,
-    volume              REAL,
-    volume_ma20         REAL,
-    volume_ratio        REAL,
+    ("rsi14", "REAL"),
+    ("ma20", "REAL"),
+    ("ma50", "REAL"),
+    ("macd_line", "REAL"),
+    ("macd_signal", "REAL"),
+    ("macd_hist", "REAL"),
+    ("bb_upper", "REAL"),
+    ("bb_middle", "REAL"),
+    ("bb_lower", "REAL"),
+    ("bb_percent_b", "REAL"),
+    ("volume", "REAL"),
+    ("volume_ma20", "REAL"),
+    ("volume_ratio", "REAL"),
 
-    fng_value           INTEGER,
-    fng_class           TEXT,
-    btc_dominance_pct   REAL,
+    # Scoring v2
+    ("atr_pct", "REAL"),
+    ("atr_pct_percentile", "REAL"),
+    ("adx14", "REAL"),
+    ("plus_di", "REAL"),
+    ("minus_di", "REAL"),
+    ("obv_above_sma20", "INTEGER"),
 
-    score               INTEGER,
-    label               TEXT,
-    cat_trend           INTEGER,
-    cat_momentum        INTEGER,
-    cat_sentiment       INTEGER,
-    cat_volatility      INTEGER,
+    ("fng_value", "INTEGER"),
+    ("fng_class", "TEXT"),
+    ("btc_dominance_pct", "REAL"),
 
-    signal_count        INTEGER,
-    backfilled          INTEGER NOT NULL DEFAULT 0,
-    signals_json        TEXT,
-    raw_json            TEXT
-);
-CREATE INDEX IF NOT EXISTS idx_snapshots_date ON snapshots(date DESC);
-"""
+    ("score", "INTEGER"),
+    ("label", "TEXT"),
+    ("cat_trend", "INTEGER"),
+    ("cat_momentum", "INTEGER"),
+    ("cat_sentiment", "INTEGER"),
+    ("cat_volatility", "INTEGER"),
+    ("scoring_version", "INTEGER"),
+    ("adjustments_json", "TEXT"),
 
-COLUMNS = [
-    "date", "generated_at", "fetched_at", "ingested_at",
-    "close", "open", "high", "low",
-    "change_1d_pct", "change_7d_pct", "change_30d_pct",
-    "rsi14", "ma20", "ma50", "macd_line", "macd_signal", "macd_hist",
-    "bb_upper", "bb_middle", "bb_lower", "bb_percent_b",
-    "volume", "volume_ma20", "volume_ratio",
-    "fng_value", "fng_class", "btc_dominance_pct",
-    "score", "label",
-    "cat_trend", "cat_momentum", "cat_sentiment", "cat_volatility",
-    "signal_count", "backfilled", "signals_json", "raw_json",
+    ("signal_count", "INTEGER"),
+    ("backfilled", "INTEGER NOT NULL DEFAULT 0"),
+    ("signals_json", "TEXT"),
+    ("raw_json", "TEXT"),
 ]
+
+COLUMNS = [nama for nama, _ in COLUMN_DEFS]
+
+SCHEMA = (
+    "CREATE TABLE IF NOT EXISTS snapshots (\n"
+    + ",\n".join(f"    {nama:<20}{tipe}" for nama, tipe in COLUMN_DEFS)
+    + "\n);\nCREATE INDEX IF NOT EXISTS idx_snapshots_date ON snapshots(date DESC);\n"
+)
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    """Tambahkan kolom yang belum ada di database lama."""
+    ada = {r[1] for r in conn.execute("PRAGMA table_info(snapshots)")}
+    for nama, tipe in COLUMN_DEFS:
+        if nama in ada:
+            continue
+        # ALTER TABLE tidak bisa menambah PRIMARY KEY, dan NOT NULL tanpa
+        # DEFAULT ditolak karena baris lama tidak punya nilai untuknya.
+        tipe_alter = tipe.replace("PRIMARY KEY", "").strip()
+        if "NOT NULL" in tipe_alter and "DEFAULT" not in tipe_alter:
+            tipe_alter = tipe_alter.replace("NOT NULL", "").strip()
+        conn.execute(f"ALTER TABLE snapshots ADD COLUMN {nama} {tipe_alter}")
+    conn.commit()
 
 
 def connect(path: str = DEFAULT_DB) -> sqlite3.Connection:
-    """Buka (dan kalau perlu buat) database beserta skemanya."""
+    """Buka (dan kalau perlu buat atau migrasikan) database beserta skemanya."""
     parent = os.path.dirname(path)
     if parent:
         os.makedirs(parent, exist_ok=True)
     conn = sqlite3.connect(path)
     conn.row_factory = sqlite3.Row
     conn.executescript(SCHEMA)
+    _migrate(conn)
     return conn
 
 
@@ -102,6 +124,7 @@ def to_row(payload: dict[str, Any]) -> dict[str, Any]:
     cats = scores.get("by_category") or {}
     meta = payload.get("meta") or {}
     signals = payload.get("signals") or []
+    obv_naik = ind.get("obv_above_sma20")
 
     return {
         "date": payload["data_as_of"],
@@ -131,6 +154,13 @@ def to_row(payload: dict[str, Any]) -> dict[str, Any]:
         "volume_ma20": ind.get("volume_ma20"),
         "volume_ratio": ind.get("volume_ratio"),
 
+        "atr_pct": ind.get("atr_pct"),
+        "atr_pct_percentile": ind.get("atr_pct_percentile"),
+        "adx14": ind.get("adx14"),
+        "plus_di": ind.get("plus_di"),
+        "minus_di": ind.get("minus_di"),
+        "obv_above_sma20": None if obv_naik is None else int(bool(obv_naik)),
+
         "fng_value": fng.get("value"),
         "fng_class": fng.get("classification"),
         "btc_dominance_pct": sent.get("btc_dominance_pct"),
@@ -141,6 +171,9 @@ def to_row(payload: dict[str, Any]) -> dict[str, Any]:
         "cat_momentum": cats.get("momentum"),
         "cat_sentiment": cats.get("sentiment"),
         "cat_volatility": cats.get("volatility"),
+        # Dokumen tanpa versi berasal dari scoring v1, sebelum field ini ada.
+        "scoring_version": meta.get("scoring_version", 1),
+        "adjustments_json": json.dumps(scores.get("adjustments") or [], ensure_ascii=False),
 
         "signal_count": len(signals),
         "backfilled": 1 if meta.get("backfilled") else 0,

@@ -19,7 +19,7 @@ menunjukkan data terakhir yang ada walau sumbernya sedang tidak bisa dihubungi.
 | Fase | Isi | Status |
 |---|---|---|
 | D0 | Setup repo, venv, cron lokal | Kode siap; penjadwalan perlu didaftarkan (lihat bawah) |
-| D1 | `fetch_history.py` + SQLite, dengan aturan dedup | Selesai, 14 tes lolos |
+| D1 | `fetch_history.py` + SQLite, dengan aturan dedup dan migrasi skema | Selesai, 20 tes lolos |
 | D2 | `app.py` — dashboard sesuai desain "Voltage" | Selesai |
 | D3 | Akses tanpa start manual | Belum — pilihan ada di bawah |
 
@@ -34,7 +34,7 @@ pip install -r requirements.txt -r requirements-dev.txt
 python fetch_history.py --from-dir ../Pipeline_project/output/history
 
 streamlit run app.py              # buka http://localhost:8501
-pytest -q                         # 14 tes
+pytest -q                         # 20 tes
 ```
 
 Kalau database masih kosong, dashboard menampilkan halaman petunjuk berisi perintah
@@ -66,13 +66,13 @@ file itu ikut masuk repo.
 
 ## Menjadwalkan pengambilan data
 
-Jadwalkan **setelah** cron GitHub Actions di repo analisis (07:00 WIB). Jeda satu jam
+Jadwalkan **setelah** cron GitHub Actions di repo analisis (07:37 WIB). Jeda satu jam
 memberi ruang untuk keterlambatan penjadwal Actions yang normalnya 5–30 menit.
 
 **Linux/macOS (crontab):**
 
 ```cron
-0 8 * * * cd /path/ke/bitcoin-dashboard && .venv/bin/python fetch_history.py >> data/cron.log 2>&1
+0 9 * * * cd /path/ke/bitcoin-dashboard && .venv/bin/python fetch_history.py >> data/cron.log 2>&1
 ```
 
 **Windows (Task Scheduler):**
@@ -80,7 +80,7 @@ memberi ruang untuk keterlambatan penjadwal Actions yang normalnya 5–30 menit.
 ```powershell
 $aksi = New-ScheduledTaskAction -Execute "C:\path\ke\bitcoin-dashboard\.venv\Scripts\python.exe" `
         -Argument "fetch_history.py" -WorkingDirectory "C:\path\ke\bitcoin-dashboard"
-$pemicu = New-ScheduledTaskTrigger -Daily -At 8:00AM
+$pemicu = New-ScheduledTaskTrigger -Daily -At 9:00AM
 Register-ScheduledTask -TaskName "BTC Dashboard Fetch" -Action $aksi -Trigger $pemicu
 ```
 
@@ -120,6 +120,15 @@ snapshot terakhir; kalau mesin ini mati tiga hari, tiga hari itu hilang permanen
 **Data basi ditandai, bukan disembunyikan.** Kalau `generated_at` lebih tua dari 36 jam,
 masthead berubah merah dan muncul spanduk peringatan di atas halaman — supaya angka
 kemarin tidak terbaca sebagai kondisi hari ini.
+
+**Scoring v2 ditampilkan apa adanya.** Sinyal `"kind": "info"` (misalnya "Tren kuat",
+"Volatilitas sangat rendah") ditandai INFO dan tidak dihitung sebagai sinyal aktif. Kalau
+skor tren diredam karena ADX lemah, bar Tren memberi catatan "diredam ×0,5" beserta
+alasannya — tanpa itu, bar yang pendek terbaca sebagai tren yang lemah padahal sinyal
+trennya kuat dan hanya dianggap kurang andal. Strip indikator menampilkan ADX dan ATR
+harian menggantikan pita Bollinger atas/bawah, yang sudah terwakili oleh %B.
+
+Database lama tidak perlu dihapus: kolom baru ditambahkan otomatis saat dibuka.
 
 **Tampilan tidak menyimpulkan apa pun.** Kalimat pembuka disusun ulang dari skor dan
 kategori yang sudah ada di JSON. Semua kesimpulan analisis dihitung di repo analisis.

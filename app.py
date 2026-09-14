@@ -125,7 +125,7 @@ def main() -> None:
 
     st.html(C.indicator_strip(terbaru))
     st.html(C.history_table(riwayat))
-    st.html(C.footer(len(riwayat)))
+    st.html(C.footer(len(riwayat), terbaru.get("scoring_version")))
 
 
 if __name__ == "__main__":
